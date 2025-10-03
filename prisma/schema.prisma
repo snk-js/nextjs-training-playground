@@ -1,0 +1,205 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum LandType {
+  PRIVATE
+  PUBLIC
+  GENESIS
+}
+
+enum LandStatus {
+  AVAILABLE
+  LOCKED
+  DEVELOPING
+}
+
+enum TransactionType {
+  PURCHASE
+  SALE
+  RENT
+  EXCHANGE
+  TRANSFER
+}
+
+enum OfferStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  CANCELLED
+  EXPIRED
+}
+
+model User {
+  id              String          @id @default(cuid())
+  email           String          @unique
+  username        String          @unique
+  displayName     String
+  bio             String?
+  avatarUrl       String?
+  balance         Decimal         @default(10000) @db.Decimal(20, 2)
+  reputation      Int             @default(0)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  
+  // Relations
+  ownerships      LandOwnership[]
+  sentOffers      Offer[]         @relation("SentOffers")
+  receivedOffers  Offer[]         @relation("ReceivedOffers")
+  rentalsAsOwner  Rental[]        @relation("RentalOwner")
+  rentalsAsTenant Rental[]        @relation("RentalTenant")
+  watchlist       Land[]          @relation("Watchlist")
+  sentTransactions      Transaction[]     @relation("SentTransactions")
+  receivedTransactions  Transaction[]     @relation("ReceivedTransactions")
+}
+
+model Land {
+  id              String          @id @default(cuid())
+  name            String
+  description     String?
+  type            LandType        @default(PUBLIC)
+  status          LandStatus      @default(AVAILABLE)
+  
+  // Spatial properties
+  x               Int
+  y               Int
+  width           Int             @default(1)
+  height          Int             @default(1)
+  area            Int             @default(1)
+  
+  // Value properties
+  baseValue       Decimal         @db.Decimal(20, 2)
+  currentValue    Decimal         @db.Decimal(20, 2)
+  lastSalePrice   Decimal?        @db.Decimal(20, 2)
+  
+  // Visibility settings
+  isPubliclyVisible Boolean       @default(true)
+  showOwnerInfo   Boolean         @default(true)
+  showPriceHistory Boolean        @default(true)
+  
+  // Development
+  developmentLevel Int            @default(0)
+  developmentData Json?           // Store custom development info
+  
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  
+  // Relations
+  ownerships      LandOwnership[]
+  transactions    Transaction[]
+  offers          Offer[]
+  rentals         Rental[]
+  watchers        User[]          @relation("Watchlist")
+  priceHistory    PriceHistory[]
+  
+  @@unique([x, y])
+  @@index([type, status])
+}
+
+model LandOwnership {
+  id              String          @id @default(cuid())
+  userId          String
+  landId          String
+  percentage      Decimal         @db.Decimal(5, 2) // 0.01 to 100.00
+  acquiredAt      DateTime        @default(now())
+  acquiredPrice   Decimal         @db.Decimal(20, 2)
+  isOriginalOwner Boolean         @default(false)
+  
+  user            User            @relation(fields: [userId], references: [id])
+  land            Land            @relation(fields: [landId], references: [id])
+  
+  @@unique([userId, landId])
+  @@index([landId])
+}
+
+model Transaction {
+  id              String          @id @default(cuid())
+  type            TransactionType
+  landId          String
+  fromUserId      String?         // null for genesis lands
+  toUserId        String
+  amount          Decimal         @db.Decimal(20, 2)
+  percentage      Decimal         @db.Decimal(5, 2)
+  
+  // Additional transaction data
+  previousValue   Decimal?        @db.Decimal(20, 2)
+  newValue        Decimal?        @db.Decimal(20, 2)
+  notes           String?
+  metadata        Json?
+  
+  createdAt       DateTime        @default(now())
+  
+  land            Land            @relation(fields: [landId], references: [id])
+  fromUser         User?          @relation("SentTransactions", fields: [fromUserId], references: [id])
+  toUser           User           @relation("ReceivedTransactions", fields: [toUserId], references: [id])
+  
+  @@index([landId, createdAt])
+}
+
+model Offer {
+  id              String          @id @default(cuid())
+  landId          String
+  fromUserId      String
+  toUserId        String?         // null for public offers
+  
+  type            TransactionType
+  amount          Decimal         @db.Decimal(20, 2)
+  percentage      Decimal         @db.Decimal(5, 2)
+  
+  status          OfferStatus     @default(PENDING)
+  message         String?
+  
+  expiresAt       DateTime?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  
+  land            Land            @relation(fields: [landId], references: [id])
+  fromUser        User            @relation(fields: [fromUserId], references: [id], name: "SentOffers")
+  toUser          User?           @relation(fields: [toUserId], references: [id], name: "ReceivedOffers")
+  
+  @@index([status, expiresAt])
+}
+
+model Rental {
+  id              String          @id @default(cuid())
+  landId          String
+  ownerId         String
+  tenantId        String
+  
+  monthlyRate     Decimal         @db.Decimal(20, 2)
+  startDate       DateTime
+  endDate         DateTime?
+  isActive        Boolean         @default(true)
+  
+  totalPaid       Decimal         @default(0) @db.Decimal(20, 2)
+  lastPaymentDate DateTime?
+  
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  
+  land            Land            @relation(fields: [landId], references: [id])
+  owner           User            @relation(fields: [ownerId], references: [id], name: "RentalOwner")
+  tenant          User            @relation(fields: [tenantId], references: [id], name: "RentalTenant")
+}
+
+model PriceHistory {
+  id              String          @id @default(cuid())
+  landId          String
+  price           Decimal         @db.Decimal(20, 2)
+  recordedAt      DateTime        @default(now())
+  
+  land            Land            @relation(fields: [landId], references: [id])
+  
+  @@index([landId, recordedAt])
+}
